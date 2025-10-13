@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+  <section class="bg-white p-8 rounded-xl shadow">
+    <div class="flex items-start gap-8">
+      <div class="flex-1">
+        <h1 class="text-3xl font-bold text-slate-800">Smart parking — find, book, go</h1>
+        <p class="mt-3 text-slate-600">A simple app that helps you find and book parking spots. Sign up and start finding parking nearby.</p>
+        <div class="mt-6">
+          {% if session.get('user_id') %}
+            <a href="{{ url_for('main.search') }}" class="px-6 py-3 bg-sky-600 text-white rounded shadow">Find parking</a>
+          {% else %}
+            <a href="{{ url_for('main.register') }}" class="px-6 py-3 bg-sky-600 text-white rounded shadow">Get started</a>
+          {% endif %}
+        </div>
+      </div>
+      <div class="w-72">
+        <div class="p-6 border rounded-lg">
+          <div class="text-sm text-slate-500">Why ParkSmart?</div>
+          <ul class="mt-4 space-y-2 text-slate-700">
+            <li>Simple search</li>
+            <li>Clean UI</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+{% endblock %}

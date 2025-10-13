@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-2xl mx-auto bg-white p-8 rounded-xl shadow">
+  <h2 class="text-2xl font-semibold mb-4">Post your parking space</h2>
+
+  <div class="mb-4 text-sm text-slate-500">
+    You can search an address (Places Autocomplete) or click <strong>Use my current location</strong> to auto-fill latitude, longitude and Google Maps URL.
+  </div>
+
+  <form id="postForm" method="POST" class="space-y-4">
+    <input id="title" name="title" placeholder="Title (e.g. Mall Parking A)" class="w-full p-3 border rounded" required />
+    <input id="address" name="address" placeholder="Address (autocomplete)" class="w-full p-3 border rounded" />
+    <div class="grid grid-cols-2 gap-4">
+      <input id="lat" name="lat" placeholder="Latitude (optional)" class="w-full p-3 border rounded" />
+      <input id="lng" name="lng" placeholder="Longitude (optional)" class="w-full p-3 border rounded" />
+    </div>
+    <input id="google_map_url" name="google_map_url" placeholder="Google Maps URL (auto-filled)" class="w-full p-3 border rounded" />
+    <input id="price_per_hour" name="price_per_hour" placeholder="Price per hour (e.g. 30)" class="w-full p-3 border rounded" />
+    <div class="flex gap-3 items-center">
+      <button type="submit" class="px-6 py-2 bg-sky-600 text-white rounded">Post parking</button>
+      <button id="useLocation" type="button" class="px-4 py-2 border rounded text-slate-600">Use my current location</button>
+      <a href="{{ url_for('main.dashboard') }}" class="px-6 py-2 border rounded">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<!-- Load Google Maps JS (Places) -->
+<script async
+  src="https://maps.googleapis.com/maps/api/js?key={{ config['GOOGLE_MAPS_API_KEY'] }}&libraries=places&callback=initAutocomplete"></script>
+
+<script>
+function initAutocomplete() {
+  const input = document.getElementById('address');
+  if (!input) return;
+  const autocomplete = new google.maps.places.Autocomplete(input, { types: ['geocode'] });
+  autocomplete.addListener('place_changed', () => {
+    const place = autocomplete.getPlace();
+    if (!place.geometry) return;
+    const lat = place.geometry.location.lat();
+    const lng = place.geometry.location.lng();
+    document.getElementById('lat').value = lat;
+    document.getElementById('lng').value = lng;
+    document.getElementById('google_map_url').value = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  });
+}
+
+// Geolocation button
+document.getElementById('useLocation').addEventListener('click', async () => {
+  if (!navigator.geolocation) {
+    alert('Geolocation not supported');
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(position => {
+    const lat = position.coords.latitude;
+    const lng = position.coords.longitude;
+    document.getElementById('lat').value = lat;
+    document.getElementById('lng').value = lng;
+    document.getElementById('google_map_url').value = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+    // reverse geocode for a friendly address optionally (simple approach uses Maps Geocoder)
+    if (typeof google !== 'undefined' && google.maps && google.maps.Geocoder) {
+      const geocoder = new google.maps.Geocoder();
+      geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+        if (status === 'OK' && results && results[0]) {
+          document.getElementById('address').value = results[0].formatted_address;
+        }
+      });
+    }
+  }, err => {
+    alert('Unable to fetch location: ' + err.message);
+  }, { enableHighAccuracy: true, timeout: 10000 });
+});
+
+// Keep server-side form submit (no AJAX) so existing backend works fine
+</script>
+{% endblock %}
+
+
+mysql -h parksmart-db.cgvusuoowsqu.us-east-1.rds.amazonaws.com -P 3306 -u admin -p

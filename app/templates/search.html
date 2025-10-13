@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="bg-white p-6 rounded-xl shadow">
+  <h2 class="text-xl font-semibold">Search Nearby Parking</h2>
+  <p class="text-slate-500 mt-1">Search and book parking spaces. Tap marker info to book.</p>
+
+  <div class="mt-4 grid grid-cols-3 gap-4">
+    <div class="col-span-2">
+      <div class="p-4 border rounded">
+        <div class="flex gap-2 mb-3">
+          <input id="q" placeholder="Search by title or address" class="p-2 border rounded flex-1" />
+          <input id="min_price" placeholder="Min price" class="p-2 border rounded w-28" />
+          <input id="max_price" placeholder="Max price" class="p-2 border rounded w-28" />
+          <button id="searchBtn" class="px-4 py-2 bg-sky-600 text-white rounded">Search</button>
+          <button id="locateBtn" class="px-3 py-2 border rounded">My location</button>
+        </div>
+
+        <div id="map" class="mt-4 h-96 border rounded"></div>
+      </div>
+
+      <div id="results" class="mt-4 space-y-3"></div>
+    </div>
+
+    <aside>
+      <div class="bg-white p-4 rounded shadow">
+        <h3 class="font-semibold">Filters</h3>
+        <div class="mt-3 text-sm text-slate-600">Use filters above. Click a marker to open details and book.</div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- Google Maps JS -->
+<script async
+  src="https://maps.googleapis.com/maps/api/js?key={{ config['GOOGLE_MAPS_API_KEY'] }}&callback=initMap"></script>
+
+<script>
+let map, markers = [], infoWindow;
+let userLat = null, userLng = null;
+
+function initMap() {
+  map = new google.maps.Map(document.getElementById('map'), {
+    center: { lat: 12.9716, lng: 77.5946 }, // default center
+    zoom: 13
+  });
+  infoWindow = new google.maps.InfoWindow();
+  doSearch(); // initial load
+}
+
+// helper to clear markers
+function clearMarkers() {
+  markers.forEach(m => m.setMap(null));
+  markers = [];
+}
+
+// render results list (below map) and place markers
+function renderResults(spaces) {
+  clearMarkers();
+  const results = document.getElementById('results');
+  results.innerHTML = '';
+  spaces.forEach(s => {
+    // list item
+    const el = document.createElement('div');
+    el.className = 'p-3 border rounded flex justify-between items-center';
+    el.innerHTML = `<div>
+        <div class="font-medium">${s.title} ${s.is_available ? '' : '<span class="text-sm text-red-600"> (unavailable)</span>'}</div>
+        <div class="text-sm text-slate-500">${s.address || ''} • ₹${s.price_per_hour}/hr • Owner: ${s.owner_username || '—'}</div>
+      </div>
+      <div style="min-width:150px">
+        ${s.is_available ? `<button onclick="bookFromUI(${s.id})" class="px-3 py-1 bg-sky-600 text-white rounded">Book</button>` : `<button disabled class="px-3 py-1 border rounded text-slate-500">Booked</button>`}
+        ${s.google_map_url ? `<a class="ml-2 text-sky-600" href="${s.google_map_url}" target="_blank">Open</a>` : ''}
+      </div>`;
+    results.appendChild(el);
+
+    // marker
+    if (s.lat && s.lng) {
+      const pos = { lat: Number(s.lat), lng: Number(s.lng) };
+      const marker = new google.maps.Marker({ position: pos, map });
+      marker.addListener('click', () => {
+        const content = `<div style="min-width:220px">
+            <div style="font-weight:600">${s.title}</div>
+            <div style="font-size:13px;color:#555">${s.address || ''}</div>
+            <div style="font-size:13px;margin-top:4px">₹${s.price_per_hour}/hr • ${s.is_available ? 'Available' : 'Unavailable'}</div>
+            <div style="margin-top:6px">
+              ${s.is_available ? `<button onclick="bookFromMarker(${s.id})" class="px-3 py-1 bg-sky-600 text-white rounded">Book</button>` : `<button disabled class="px-3 py-1 border rounded text-slate-500">Booked</button>`}
+              ${s.google_map_url ? `<a class="ml-2" href="${s.google_map_url}" target="_blank">Open in Maps</a>` : ''}
+            </div>
+          </div>`;
+        infoWindow.setContent(content);
+        infoWindow.open(map, marker);
+      });
+      markers.push(marker);
+    }
+  });
+
+  // optionally fit map to markers
+  if (markers.length) {
+    const bounds = new google.maps.LatLngBounds();
+    markers.forEach(m => bounds.extend(m.getPosition()));
+    map.fitBounds(bounds);
+    if (markers.length === 1) map.setZoom(15);
+  } else if (userLat && userLng) {
+    map.setCenter({ lat: userLat, lng: userLng });
+  }
+}
+
+// search function
+async function doSearch() {
+  const q = document.getElementById('q').value;
+  const min_price = document.getElementById('min_price').value;
+  const max_price = document.getElementById('max_price').value;
+
+  const params = new URLSearchParams();
+  if (q) params.append('q', q);
+  if (min_price) params.append('min_price', min_price);
+  if (max_price) params.append('max_price', max_price);
+  if (userLat && userLng) {
+    params.append('lat', userLat);
+    params.append('lng', userLng);
+    params.append('radius_km', 10);
+  }
+  params.append('available_only', '1');
+
+  const res = await fetch('/api/search-parking?' + params.toString(), { credentials: 'include' });
+  const j = await res.json();
+  renderResults(j.spaces || []);
+}
+
+// locating user
+document.getElementById('locateBtn').addEventListener('click', () => {
+  if (!navigator.geolocation) return alert('Geolocation not supported');
+  navigator.geolocation.getCurrentPosition(pos => {
+    userLat = pos.coords.latitude;
+    userLng = pos.coords.longitude;
+    map.setCenter({ lat: userLat, lng: userLng });
+    map.setZoom(14);
+    doSearch();
+  }, err => alert('Unable to get location: ' + err.message));
+});
+
+// search button
+document.getElementById('searchBtn').addEventListener('click', doSearch);
+
+// booking helpers
+async function bookFromMarker(id) {
+  // close infoWindow to avoid duplicate clicks
+  infoWindow.close();
+  await doBook(id);
+}
+async function bookFromUI(id) { await doBook(id); }
+
+async function doBook(parking_id) {
+  // naive 1 hour booking
+  const now = new Date(), end = new Date(Date.now() + 60*60*1000);
+  const payload = { parking_id, time_start: now.toISOString(), time_end: end.toISOString() };
+  const res = await fetch('/book', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    credentials: 'include',
+    body: JSON.stringify(payload)
+  });
+  const j = await res.json();
+  if (res.ok) {
+    alert('Booked! id: ' + j.booking_id + ' total: ₹' + j.total);
+    doSearch();
+  } else {
+    alert('Booking failed: ' + (j.error || 'unknown'));
+  }
+}
+</script>
+{% endblock %}

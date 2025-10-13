@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ParkSmart</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-white text-slate-800">
+  <header class="bg-gradient-to-r from-sky-50 to-white border-b">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+      <a href="{{ url_for('main.index') }}" class="flex items-center gap-3">
+        <div class="text-2xl font-bold text-sky-600">ParkSmart</div>
+      </a>
+      <nav class="flex items-center gap-4">
+        {% if session.get('user_id') %}
+        <a href="{{ url_for('main.search') }}" class="text-sky-600 hover:underline">Find Parking</a>
+        <a href="{{ url_for('main.post_parking') }}" class="text-sky-600 hover:underline">Post Parking</a>
+        <a href="{{ url_for('main.dashboard') }}" class="text-slate-600 hover:underline">Dashboard</a>
+        <a href="{{ url_for('main.logout') }}" class="px-3 py-1 border rounded text-slate-600 hover:bg-slate-50">Logout</a>
+        {% else %}
+
+          <a href="{{ url_for('main.login') }}" class="text-sky-600 hover:underline">Login</a>
+          <a href="{{ url_for('main.register') }}" class="px-3 py-1 bg-sky-600 text-white rounded shadow">Sign up</a>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-10">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="space-y-2 mb-6">
+          {% for category, msg in messages %}
+            <div class="p-3 rounded {{ 'bg-green-50 text-green-700' if category == 'success' else ('bg-red-50 text-red-700' if category == 'error' else 'bg-slate-50 text-slate-700') }}">
+              {{ msg }}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="border-t py-6 mt-12 text-center text-sm text-slate-500">
+    © {{ (config.get('YEAR') if config.get('YEAR') else '') }} ParkSmart
+  </footer>
+</body>
+</html>

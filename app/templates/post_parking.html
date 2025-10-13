@@ -1,0 +1,157 @@
+<!-- Place this inside your post_parking.html where the previous scripts were -->
+<!-- Make sure GOOGLE_MAPS_API_KEY is in app.config and used when loading the Maps script -->
+
+<!-- Map container (add near the form) -->
+
+
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-2xl mx-auto bg-white p-8 rounded-xl shadow">
+  <h2 class="text-2xl font-semibold mb-4">Post your parking space</h2>
+
+  <div class="mb-4 text-sm text-slate-500">
+    You can search an address (Places Autocomplete) or click <strong>Use my current location</strong> to auto-fill latitude, longitude and Google Maps URL.
+  </div>
+
+  <form id="postForm" method="POST" class="space-y-4">
+    <input id="title" name="title" placeholder="Title (e.g. Mall Parking A)" class="w-full p-3 border rounded" required />
+    <input id="address" name="address" placeholder="Address (autocomplete)" class="w-full p-3 border rounded" />
+    <div class="grid grid-cols-2 gap-4">
+      <input id="lat" name="lat" placeholder="Latitude (optional)" class="w-full p-3 border rounded" />
+      <input id="lng" name="lng" placeholder="Longitude (optional)" class="w-full p-3 border rounded" />
+    </div>
+    <input id="google_map_url" name="google_map_url" placeholder="Google Maps URL (auto-filled)" class="w-full p-3 border rounded" />
+    <input id="price_per_hour" name="price_per_hour" placeholder="Price per hour (e.g. 30)" class="w-full p-3 border rounded" />
+    <div class="flex gap-3 items-center">
+      <button type="submit" class="px-6 py-2 bg-sky-600 text-white rounded">Post parking</button>
+      <button id="useLocation" type="button" class="px-4 py-2 border rounded text-slate-600">Use my current location</button>
+      <a href="{{ url_for('main.dashboard') }}" class="px-6 py-2 border rounded">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<div id="mini-map" class="mt-4 h-64 border rounded"></div>
+<div id="geo-feedback" class="text-sm text-slate-600 mt-2"></div>
+
+<script async
+  src="https://maps.googleapis.com/maps/api/js?key={{ config['GOOGLE_MAPS_API_KEY'] }}&libraries=places&callback=initAutocomplete"></script>
+
+<script>
+let autocomplete;
+let miniMap, miniMarker, geocoder;
+const geoFeedback = document.getElementById('geo-feedback');
+
+function initAutocomplete() {
+  // Places autocomplete for address input (if present)
+  const input = document.getElementById('address');
+  if (input) {
+    autocomplete = new google.maps.places.Autocomplete(input, { types: ['geocode'] });
+    autocomplete.addListener('place_changed', () => {
+      const place = autocomplete.getPlace();
+      if (!place.geometry) return;
+      updatePosition(place.geometry.location.lat(), place.geometry.location.lng());
+      // center the mini map if available
+      if (miniMap) {
+        const pos = { lat: place.geometry.location.lat(), lng: place.geometry.location.lng() };
+        miniMap.setCenter(pos);
+        miniMarker.setPosition(pos);
+      }
+    });
+  }
+
+  // Geocoder for reverse lookup
+  geocoder = new google.maps.Geocoder();
+
+  // init a small map for manual correction
+  miniMap = new google.maps.Map(document.getElementById('mini-map'), {
+    center: { lat: 12.9716, lng: 77.5946 },
+    zoom: 13
+  });
+  miniMarker = new google.maps.Marker({
+    map: miniMap,
+    draggable: true,
+    visible: false
+  });
+
+  // marker drag handler to update form fields
+  miniMarker.addListener('dragend', () => {
+    const p = miniMarker.getPosition();
+    updatePosition(p.lat(), p.lng());
+    // reverse geocode to update address text (optional)
+    geocoder.geocode({ location: { lat: p.lat(), lng: p.lng() } }, (results, status) => {
+      if (status === 'OK' && results && results[0]) {
+        document.getElementById('address').value = results[0].formatted_address;
+      }
+    });
+  });
+
+  // attach "Use my current location" button handler
+  document.getElementById('useLocation').addEventListener('click', async () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation not supported by your browser');
+      return;
+    }
+    geoFeedback.textContent = 'Getting location… (requesting high accuracy)';
+    // Use high-accuracy and no caching
+    navigator.geolocation.getCurrentPosition(successPos, errorPos, {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 0
+    });
+  });
+}
+
+// Called when geolocation succeeds
+function successPos(pos) {
+  const lat = pos.coords.latitude;
+  const lng = pos.coords.longitude;
+  const accuracy = pos.coords.accuracy; // meters
+  geoFeedback.innerHTML = `Location found — lat: ${lat.toFixed(6)}, lng: ${lng.toFixed(6)}, accuracy: ${accuracy} meters.`;
+
+  // Update the form and map
+  updatePosition(lat, lng);
+
+  // show draggable marker and center
+  miniMarker.setPosition({ lat, lng });
+  miniMarker.setVisible(true);
+  miniMap.setCenter({ lat, lng });
+  if (accuracy && accuracy < 100) {
+    miniMap.setZoom(17);
+  } else if (accuracy && accuracy < 500) {
+    miniMap.setZoom(15);
+  } else {
+    miniMap.setZoom(13);
+  }
+
+  // Reverse geocode to fill address field (best-effort)
+  if (geocoder) {
+    geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+      if (status === 'OK' && results && results[0]) {
+        document.getElementById('address').value = results[0].formatted_address;
+      } else {
+        // not fatal — keep coords only
+      }
+    });
+  }
+}
+
+// Called when geolocation fails
+function errorPos(err) {
+  console.warn('Geolocation error', err);
+  geoFeedback.innerHTML = `Unable to get precise location: ${err.message}. Try enabling location services, disabling VPN, or use the map pin to set location.`;
+  // show marker so user can manually pick
+  miniMarker.setVisible(true);
+  miniMap.setCenter(miniMarker.getPosition() || miniMap.getCenter());
+}
+
+// Helper: update hidden form fields and Google Maps URL
+function updatePosition(lat, lng) {
+  document.getElementById('lat').value = lat;
+  document.getElementById('lng').value = lng;
+  document.getElementById('google_map_url').value = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  // log for debugging
+  console.log('Position set:', lat, lng);
+}
+</script>
+{% endblock %}
+
