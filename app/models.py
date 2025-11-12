@@ -31,8 +31,12 @@ class Booking(db.Model):
     id = db.Column(db.BigInteger, primary_key=True)
     user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)  # who booked
     parking_id = db.Column(db.BigInteger, db.ForeignKey("parking_spaces.id"), nullable=False)
-    time_start = db.Column(db.DateTime, nullable=False)
-    time_end = db.Column(db.DateTime, nullable=False)
+    # Optional timed booking window. When either is NULL, treat booking as an indefinite exclusive lock
+    # that makes the space unavailable to anyone else until removed/cancelled.
+    time_start = db.Column(db.DateTime, nullable=True)
+    time_end = db.Column(db.DateTime, nullable=True)
+    # Optional duration in hours for convenience (derived from time_end-time_start if both provided)
+    duration_hours = db.Column(db.Numeric(6,2), nullable=True)
     total_amount = db.Column(db.Numeric(10,2), default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 

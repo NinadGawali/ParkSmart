@@ -2,15 +2,17 @@
 {% block content %}
 <div class="bg-white p-6 rounded-xl shadow">
   <h2 class="text-xl font-semibold">Search Nearby Parking</h2>
-  <p class="text-slate-500 mt-1">Search and book parking spaces. Tap marker info to book.</p>
+  <p class="text-slate-500 mt-1">Search and book parking spaces. Optionally choose a start time and hours to check availability for that window.</p>
 
   <div class="mt-4 grid grid-cols-3 gap-4">
     <div class="col-span-2">
       <div class="p-4 border rounded">
-        <div class="flex gap-2 mb-3">
+        <div class="flex gap-2 mb-3 flex-wrap items-center">
           <input id="q" placeholder="Search by title or address" class="p-2 border rounded flex-1" />
           <input id="min_price" placeholder="Min price" class="p-2 border rounded w-28" />
           <input id="max_price" placeholder="Max price" class="p-2 border rounded w-28" />
+          <input id="desired_start" type="datetime-local" class="p-2 border rounded" title="Start time" />
+          <input id="desired_hours" type="number" min="0.25" step="0.25" placeholder="Hours" class="p-2 border rounded w-24" />
           <button id="searchBtn" class="px-4 py-2 bg-sky-600 text-white rounded">Search</button>
           <button id="locateBtn" class="px-3 py-2 border rounded">My location</button>
         </div>
@@ -63,12 +65,14 @@ function renderResults(spaces) {
     const el = document.createElement('div');
     el.className = 'p-3 border rounded flex justify-between items-center';
     el.innerHTML = `<div>
-        <div class="font-medium">${s.title} ${s.is_available ? '' : '<span class="text-sm text-red-600"> (unavailable)</span>'}</div>
+        <div class="font-medium">${s.title} ${s.is_available ? '' : '<span class=\"text-sm text-red-600\"> (unavailable)</span>'}</div>
         <div class="text-sm text-slate-500">${s.address || ''} • ₹${s.price_per_hour}/hr • Owner: ${s.owner_username || '—'}</div>
+        <div class="text-xs mt-1 ${s.is_available ? 'text-green-600' : 'text-slate-500'}">${s.is_available ? 'Available for requested window' : 'Unavailable during requested window'}</div>
       </div>
-      <div style="min-width:150px">
-        ${s.is_available ? `<button onclick="bookFromUI(${s.id})" class="px-3 py-1 bg-sky-600 text-white rounded">Book</button>` : `<button disabled class="px-3 py-1 border rounded text-slate-500">Booked</button>`}
-        ${s.google_map_url ? `<a class="ml-2 text-sky-600" href="${s.google_map_url}" target="_blank">Open</a>` : ''}
+      <div style="min-width:170px" class="flex flex-col items-end gap-1">
+        ${s.is_available ? `<button onclick=\"bookFromUI(${s.id})\" class=\"px-3 py-1 bg-sky-600 text-white rounded text-sm\">Book</button>` : `<button disabled class=\"px-3 py-1 border rounded text-slate-500 text-sm\">Booked</button>`}
+        <div class="text-[10px] text-slate-400">Next avail ref: ${s.next_available_estimate ? s.next_available_estimate.substring(0,16).replace('T',' ') : 'n/a'}</div>
+        ${s.google_map_url ? `<a class=\"text-sky-600 text-xs\" href=\"${s.google_map_url}\" target=\"_blank\">Map</a>` : ''}
       </div>`;
     results.appendChild(el);
 
@@ -109,11 +113,18 @@ async function doSearch() {
   const q = document.getElementById('q').value;
   const min_price = document.getElementById('min_price').value;
   const max_price = document.getElementById('max_price').value;
+  const desired_start_raw = document.getElementById('desired_start').value;
+  const desired_hours = document.getElementById('desired_hours').value;
 
   const params = new URLSearchParams();
   if (q) params.append('q', q);
   if (min_price) params.append('min_price', min_price);
   if (max_price) params.append('max_price', max_price);
+  if (desired_start_raw) {
+    const iso = new Date(desired_start_raw).toISOString();
+    params.append('desired_start', iso);
+  }
+  if (desired_hours) params.append('desired_hours', desired_hours);
   if (userLat && userLng) {
     params.append('lat', userLat);
     params.append('lng', userLng);
@@ -150,9 +161,27 @@ async function bookFromMarker(id) {
 async function bookFromUI(id) { await doBook(id); }
 
 async function doBook(parking_id) {
-  // naive 1 hour booking
-  const now = new Date(), end = new Date(Date.now() + 60*60*1000);
-  const payload = { parking_id, time_start: now.toISOString(), time_end: end.toISOString() };
+  // derive booking window from inputs; fallback to 1 hour from now if none provided
+  const desired_start_raw = document.getElementById('desired_start').value;
+  const desired_hours = document.getElementById('desired_hours').value;
+  let payload = { parking_id };
+  if (desired_start_raw && desired_hours) {
+    const startIso = new Date(desired_start_raw).toISOString();
+    payload.time_start = startIso;
+    payload.hours = Number(desired_hours);
+  } else if (desired_start_raw) {
+    const startIso = new Date(desired_start_raw).toISOString();
+    payload.time_start = startIso;
+    payload.hours = 1;
+  } else if (desired_hours) {
+    const now = new Date();
+    payload.time_start = now.toISOString();
+    payload.hours = Number(desired_hours);
+  } else {
+    const now = new Date(), end = new Date(Date.now() + 60*60*1000);
+    payload.time_start = now.toISOString();
+    payload.time_end = end.toISOString();
+  }
   const res = await fetch('/book', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},

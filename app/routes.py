@@ -206,6 +206,19 @@ def api_search_parking():
     available_only = request.args.get("available_only", default="1")
     available_only = True if available_only in ("1","true","True") else False
 
+    # Optional desired start + hours (for availability projection)
+    desired_start_iso = request.args.get("desired_start")  # ISO8601
+    desired_hours = request.args.get("desired_hours", type=float)
+    desired_start = None
+    if desired_start_iso:
+        try:
+            desired_start = datetime.fromisoformat(desired_start_iso)
+        except Exception:
+            desired_start = None
+    desired_end = None
+    if desired_start and desired_hours and desired_hours > 0:
+        desired_end = desired_start + timedelta(hours=desired_hours)
+
     query = ParkingSpace.query
     if q:
         like_q = f"%{q}%"
@@ -214,6 +227,7 @@ def api_search_parking():
         query = query.filter(ParkingSpace.price_per_hour >= min_price)
     if max_price is not None:
         query = query.filter(ParkingSpace.price_per_hour <= max_price)
+    # "is_available" flag still acts as master toggle: False => always unavailable irrespective of bookings.
     if available_only:
         query = query.filter(ParkingSpace.is_available == True)
 
@@ -229,6 +243,21 @@ def api_search_parking():
     results = query.limit(200).all()
     out = []
     for s in results:
+        # Determine dynamic availability: space is unavailable iff there exists an overlapping booking.
+        now = datetime.utcnow()
+        reference_start = desired_start or now
+        reference_end = desired_end or reference_start + timedelta(hours=1)
+        # Overlap logic: booking with defined window overlaps if starts before ref_end and ends after ref_start.
+        overlapping = False
+        for b in s.bookings:
+            # Indefinite lock if either time_start or time_end is NULL
+            if b.time_start is None or b.time_end is None:
+                overlapping = True
+                break
+            if b.time_start < reference_end and b.time_end > reference_start:
+                overlapping = True
+                break
+        dynamic_available = (s.is_available and not overlapping)
         out.append({
             "id": s.id,
             "title": s.title,
@@ -237,8 +266,9 @@ def api_search_parking():
             "lng": s.lng,
             "google_map_url": s.google_map_url,
             "price_per_hour": str(s.price_per_hour),
-            "is_available": bool(s.is_available),
-            "owner_username": s.owner.username if s.owner else None
+            "is_available": bool(dynamic_available),
+            "owner_username": s.owner.username if s.owner else None,
+            "next_available_estimate": (reference_end.isoformat() if overlapping else reference_start.isoformat())
         })
     return jsonify({"spaces": out})
 
@@ -254,18 +284,41 @@ def book():
 
     data = request.get_json() or {}
     parking_id = data.get("parking_id")
-    time_start = data.get("time_start")
-    time_end = data.get("time_end")
+    time_start_raw = data.get("time_start")
+    time_end_raw = data.get("time_end")
+    hours_raw = data.get("hours")  # optional duration input
 
-    if not parking_id or not time_start or not time_end:
-        return jsonify({"error": "missing fields"}), 400
+    if not parking_id:
+        return jsonify({"error": "missing parking_id"}), 400
+    if not (time_start_raw and (time_end_raw or hours_raw)):
+        return jsonify({"error": "missing time window (provide time_start + (time_end or hours))"}), 400
 
-    # parse datetimes
+    # parse start
     try:
-        ts = datetime.fromisoformat(time_start)
-        te = datetime.fromisoformat(time_end)
+        ts = datetime.fromisoformat(time_start_raw)
     except Exception:
-        return jsonify({"error": "invalid datetime format; use ISO"}), 400
+        return jsonify({"error": "invalid time_start (ISO expected)"}), 400
+
+    # derive end either from provided end or hours
+    te = None
+    if time_end_raw:
+        try:
+            te = datetime.fromisoformat(time_end_raw)
+        except Exception:
+            return jsonify({"error": "invalid time_end (ISO expected)"}), 400
+    elif hours_raw:
+        try:
+            hrs = float(hours_raw)
+            if hrs <= 0:
+                return jsonify({"error": "hours must be > 0"}), 400
+            te = ts + timedelta(hours=hrs)
+        except Exception:
+            return jsonify({"error": "invalid hours value"}), 400
+
+    if not te:
+        return jsonify({"error": "could not determine end time"}), 400
+    if te <= ts:
+        return jsonify({"error": "end must be after start"}), 400
 
     # Start a transaction to avoid race conditions
     try:
@@ -273,11 +326,25 @@ def book():
         if not ps:
             return jsonify({"error": "parking not found"}), 404
         if not ps.is_available:
-            return jsonify({"error": "parking not available"}), 400
+            return jsonify({"error": "parking currently disabled"}), 400
 
-        # compute amount (hours * price)
-        hours = max(1.0, (te - ts).total_seconds() / 3600.0)
-        total = Decimal(ps.price_per_hour) * Decimal(hours)
+        # Check overlapping bookings (including indefinite locks)
+        overlapping = False
+        for b in ps.bookings:
+            if b.time_start is None or b.time_end is None:
+                overlapping = True
+                break
+            if b.time_start < te and b.time_end > ts:
+                overlapping = True
+                break
+        if overlapping:
+            return jsonify({"error": "requested window overlaps existing booking"}), 409
+
+        # compute amount (hours * price) - round up to nearest 0.01
+        hours = (te - ts).total_seconds() / 3600.0
+        if hours < 0.01:
+            hours = 0.01
+        total = (Decimal(ps.price_per_hour) * Decimal(hours)).quantize(Decimal('0.01'))
 
         # create booking
         booking = Booking(
@@ -285,9 +352,10 @@ def book():
             parking_id=ps.id,
             time_start=ts,
             time_end=te,
+            duration_hours=Decimal(f"{hours:.2f}"),
             total_amount=total
         )
-        ps.is_available = False  # mark unavailable
+        # Do NOT flip is_available; dynamic logic will surface availability.
         db.session.add(booking)
         db.session.commit()
 
@@ -316,7 +384,7 @@ def book():
             current_app.logger.exception("Error while attempting to send receipt email")
 
 
-        return jsonify({"ok": True, "booking_id": booking.id, "total": str(total)})
+        return jsonify({"ok": True, "booking_id": booking.id, "total": str(total), "duration_hours": str(booking.duration_hours)})
     except Exception as e:
         db.session.rollback()
         current_app.logger.exception("Booking failed")

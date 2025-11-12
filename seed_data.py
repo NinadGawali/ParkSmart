@@ -1,6 +1,6 @@
 # seed_data.py
 from app import create_app
-from app.models import db, User, ParkingSpace
+from app.models import db, User, ParkingSpace, Booking
 from werkzeug.security import generate_password_hash
 from decimal import Decimal
 
@@ -27,3 +27,14 @@ with app.app_context():
         print("Seeded parking slots.")
     else:
         print("Parking slots already exist.")
+
+    # Optionally seed a time-window booking example if none exist (demonstration only)
+    if Booking.query.count() == 0 and ParkingSpace.query.first():
+        from datetime import datetime, timedelta
+        example_space = ParkingSpace.query.first()
+        start = datetime.utcnow() + timedelta(minutes=5)
+        end = start + timedelta(hours=2)
+        b = Booking(user_id=user.id, parking_id=example_space.id, time_start=start, time_end=end, duration_hours=2, total_amount=Decimal('60.00'))
+        db.session.add(b)
+        db.session.commit()
+        print("Seeded example timed booking.")
